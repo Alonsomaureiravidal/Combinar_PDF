@@ -77,7 +77,7 @@ with tab_unir:
 # ✂️ TAB SEPARAR PDF
 # =========================================================
 with tab_separar:
-    st.subheader("Separar un PDF")
+    st.subheader("Separar / Recortar un PDF")
 
     file = st.file_uploader(
         "Selecciona un archivo PDF",
@@ -93,12 +93,17 @@ with tab_separar:
         st.info(f"📄 El PDF tiene **{total_pages} páginas**")
 
         mode = st.radio(
-            "¿Cómo deseas separar el PDF?",
-            ["Separar todas las páginas", "Separar un rango de páginas"]
+            "¿Qué deseas hacer?",
+            [
+                "Recortar PDF (extraer un rango de páginas)",
+                "Separar todas las páginas (una por archivo)"
+            ]
         )
 
-        if mode == "Separar un rango de páginas":
+        # ---------------- RECORTAR PDF ----------------
+        if mode == "Recortar PDF (extraer un rango de páginas)":
             col1, col2 = st.columns(2)
+
             start = col1.number_input(
                 "Página inicial",
                 min_value=1,
@@ -115,32 +120,52 @@ with tab_separar:
             if start > end:
                 st.error("❌ La página inicial no puede ser mayor que la final.")
                 st.stop()
-        else:
-            start, end = 1, total_pages
 
-        if st.button("✂️ Separar PDF"):
-            with tempfile.TemporaryDirectory() as tmpdir:
-                zip_path = os.path.join(tmpdir, "pdf_separado.zip")
+            if st.button("✂️ Recortar PDF"):
+                writer = PdfWriter()
 
-                with zipfile.ZipFile(zip_path, "w") as zipf:
-                    for i in range(start - 1, end):
-                        writer = PdfWriter()
-                        writer.add_page(reader.pages[i])
+                for i in range(start - 1, end):
+                    writer.add_page(reader.pages[i])
 
-                        pdf_path = os.path.join(
-                            tmpdir, f"pagina_{i+1}.pdf"
-                        )
-                        with open(pdf_path, "wb") as f:
-                            writer.write(f)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    writer.write(tmp.name)
+                    output_path = tmp.name
 
-                        zipf.write(pdf_path, arcname=f"pagina_{i+1}.pdf")
-
-                with open(zip_path, "rb") as f:
+                with open(output_path, "rb") as f:
                     st.download_button(
-                        "⬇️ Descargar PDFs separados (ZIP)",
+                        "⬇️ Descargar PDF recortado",
                         f,
-                        file_name="pdf_separado.zip",
-                        mime="application/zip"
+                        file_name=f"pdf_paginas_{start}_a_{end}.pdf",
+                        mime="application/pdf"
                     )
 
-            st.success("✅ PDF separado correctamente")
+                os.remove(output_path)
+                st.success("✅ PDF recortado correctamente")
+
+        # ---------------- SEPARAR EN PAGINAS ----------------
+        else:
+            if st.button("📄 Separar en páginas"):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    zip_path = os.path.join(tmpdir, "pdf_separado.zip")
+
+                    with zipfile.ZipFile(zip_path, "w") as zipf:
+                        for i in range(total_pages):
+                            writer = PdfWriter()
+                            writer.add_page(reader.pages[i])
+
+                            pdf_path = os.path.join(tmpdir, f"pagina_{i+1}.pdf")
+                            with open(pdf_path, "wb") as f:
+                                writer.write(f)
+
+                            zipf.write(pdf_path, arcname=f"pagina_{i+1}.pdf")
+
+                    with open(zip_path, "rb") as f:
+                        st.download_button(
+                            "⬇️ Descargar páginas separadas (ZIP)",
+                            f,
+                            file_name="pdf_separado.zip",
+                            mime="application/zip"
+                        )
+
+                st.success("✅ PDF separado en páginas correctamente")
+
