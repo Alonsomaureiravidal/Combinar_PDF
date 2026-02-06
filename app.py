@@ -3,6 +3,10 @@ from PyPDF2 import PdfMerger, PdfReader, PdfWriter
 import tempfile
 import os
 import zipfile
+import io
+
+from PIL import Image
+from docx2pdf import convert as docx2pdf_convert
 
 # ---------------- CONFIG ----------------
 MAX_TOTAL_MB = 50
@@ -22,7 +26,15 @@ def total_size_mb(files):
     return sum(f.size for f in files) / (1024 * 1024)
 
 # ---------- TABS ----------
-tab_unir, tab_separar = st.tabs(["🔗 Unir PDFs", "✂️ Separar PDF"])
+tab_unir, tab_separar, tab_word, tab_img = st.tabs(
+    ["🔗 Unir PDFs", "✂️ Separar PDF", "📝 Word → PDF", "🖼️ JPG → PDF"]
+)
+
+def file_stem(filename: str) -> str:
+    """Nombre base del archivo (sin ruta ni extensión)."""
+    base = os.path.basename(filename or "archivo")
+    stem, _ = os.path.splitext(base)
+    return stem or "archivo"
 
 # =========================================================
 # 🔗 TAB UNIR PDFS
@@ -169,3 +181,97 @@ with tab_separar:
 
                 st.success("✅ PDF separado en páginas correctamente")
 
+# =========================================================
+# 📝 TAB WORD -> PDF
+# =========================================================
+with tab_word:
+    st.subheader("Convertir Word (.docx) a PDF")
+    st.caption("El PDF descargable conserva el mismo nombre del Word.")
+
+    docx_files = st.file_uploader(
+        "Selecciona uno o más archivos Word",
+        type=["docx"],
+        accept_multiple_files=True,
+        key="docx_to_pdf",
+    )
+
+    if docx_files:
+        total_mb = total_size_mb(docx_files)
+        st.info(f"📦 Tamaño total cargado: **{total_mb:.2f} MB**")
+
+        if total_mb > MAX_TOTAL_MB:
+            st.error(f"❌ El tamaño total supera el límite de {MAX_TOTAL_MB} MB.")
+            st.stop()
+
+        if st.button("📝 Convertir a PDF", key="btn_docx_to_pdf"):
+            for doc in docx_files:
+                stem = file_stem(doc.name)
+                pdf_name = f"{stem}.pdf"
+
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    input_path = os.path.join(tmpdir, doc.name)
+                    output_path = os.path.join(tmpdir, pdf_name)
+
+                    with open(input_path, "wb") as f:
+                        f.write(doc.getbuffer())
+
+                    try:
+                        # docx2pdf requiere MS Word (Windows) o un entorno compatible.
+                        docx2pdf_convert(input_path, output_path)
+                        with open(output_path, "rb") as f:
+                            st.download_button(
+                                label=f"⬇️ Descargar {pdf_name}",
+                                data=f,
+                                file_name=pdf_name,
+                                mime="application/pdf",
+                                key=f"dl_docx_{doc.name}",
+                            )
+                    except Exception as e:
+                        st.error(
+                            f"❌ No se pudo convertir `{doc.name}`. "
+                            f"En Windows normalmente necesitas Microsoft Word instalado. "
+                            f"Detalle: {e}"
+                        )
+
+# =========================================================
+# 🖼️ TAB JPG -> PDF
+# =========================================================
+with tab_img:
+    st.subheader("Convertir JPG/JPEG/PNG a PDF")
+    st.caption("El PDF descargable conserva el mismo nombre de la imagen.")
+
+    img_files = st.file_uploader(
+        "Selecciona una o más imágenes",
+        type=["jpg", "jpeg", "png"],
+        accept_multiple_files=True,
+        key="img_to_pdf",
+    )
+
+    if img_files:
+        total_mb = total_size_mb(img_files)
+        st.info(f"📦 Tamaño total cargado: **{total_mb:.2f} MB**")
+
+        if total_mb > MAX_TOTAL_MB:
+            st.error(f"❌ El tamaño total supera el límite de {MAX_TOTAL_MB} MB.")
+            st.stop()
+
+        if st.button("🖼️ Convertir a PDF", key="btn_img_to_pdf"):
+            for img in img_files:
+                stem = file_stem(img.name)
+                pdf_name = f"{stem}.pdf"
+
+                try:
+                    image = Image.open(img).convert("RGB")
+                    buf = io.BytesIO()
+                    image.save(buf, format="PDF")
+                    buf.seek(0)
+
+                    st.download_button(
+                        label=f"⬇️ Descargar {pdf_name}",
+                        data=buf,
+                        file_name=pdf_name,
+                        mime="application/pdf",
+                        key=f"dl_img_{img.name}",
+                    )
+                except Exception as e:
+                    st.error(f"❌ No se pudo convertir `{img.name}`. Detalle: {e}")
