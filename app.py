@@ -7,6 +7,7 @@ import io
 import sys
 import shutil
 import subprocess
+from pathlib import Path
 
 from PIL import Image
 from docx2pdf import convert as docx2pdf_convert
@@ -77,19 +78,32 @@ def convert_docx_to_pdf(input_path: str, output_path: str, work_dir: str) -> Non
             "En Streamlit Cloud puedes usar `packages.txt` con `libreoffice`."
         )
 
+    # LibreOffice en contenedores (Streamlit Cloud) puede fallar/crashear si usa el perfil por defecto.
+    # Forzamos un perfil aislado dentro del directorio temporal.
+    user_profile_dir = os.path.join(work_dir, "lo_profile")
+    os.makedirs(user_profile_dir, exist_ok=True)
+    user_installation = Path(user_profile_dir).resolve().as_uri()  # file:///...
+
     # LibreOffice escribe el PDF en el outdir con el mismo nombre base del DOCX.
     before = {f for f in os.listdir(work_dir) if f.lower().endswith(".pdf")}
     try:
+        env = os.environ.copy()
+        env["HOME"] = work_dir
+        # Locales razonables para evitar fallas raras en inicialización/config
+        env.setdefault("LANG", "C.UTF-8")
+        env.setdefault("LC_ALL", "C.UTF-8")
         subprocess.run(
             [
                 soffice,
                 "--headless",
                 "--nologo",
+                "--nofirststartwizard",
                 "--nolockcheck",
                 "--nodefault",
                 "--norestore",
+                f"-env:UserInstallation={user_installation}",
                 "--convert-to",
-                "pdf",
+                "pdf:writer_pdf_Export",
                 "--outdir",
                 work_dir,
                 input_path,
@@ -97,6 +111,7 @@ def convert_docx_to_pdf(input_path: str, output_path: str, work_dir: str) -> Non
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=env,
         )
     except subprocess.CalledProcessError as e:
         err = (e.stderr or b"").decode("utf-8", errors="replace")

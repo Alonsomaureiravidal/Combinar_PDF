@@ -1,2 +1,4 @@
-libreoffice
+libreoffice-writer
+default-jre-headless
+fonts-dejavu-core
 
