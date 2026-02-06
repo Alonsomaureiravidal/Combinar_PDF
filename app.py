@@ -4,6 +4,9 @@ import tempfile
 import os
 import zipfile
 import io
+import sys
+import shutil
+import subprocess
 
 from PIL import Image
 from docx2pdf import convert as docx2pdf_convert
@@ -35,6 +38,86 @@ def file_stem(filename: str) -> str:
     base = os.path.basename(filename or "archivo")
     stem, _ = os.path.splitext(base)
     return stem or "archivo"
+
+def convert_docx_to_pdf(input_path: str, output_path: str, work_dir: str) -> None:
+    """
+    Convierte un .docx a .pdf.
+
+    - En Windows intenta usar docx2pdf (requiere Microsoft Word).
+    - En Linux/macOS intenta usar LibreOffice (soffice) si está disponible.
+    """
+    def find_soffice() -> str | None:
+        # 1) PATH (Linux/macOS/Windows si está configurado)
+        found = shutil.which("soffice") or shutil.which("libreoffice")
+        if found:
+            return found
+
+        # 2) Ubicaciones típicas en Windows (LibreOffice)
+        if sys.platform.startswith("win"):
+            candidates = [
+                r"C:\Program Files\LibreOffice\program\soffice.exe",
+                r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+            ]
+            for p in candidates:
+                if os.path.exists(p):
+                    return p
+        return None
+
+    # Preferimos LibreOffice siempre que exista (es lo más portable)
+    soffice = find_soffice()
+    if not soffice and sys.platform.startswith("win"):
+        # Fallback en Windows: docx2pdf (requiere Microsoft Word)
+        docx2pdf_convert(input_path, output_path)
+        return
+
+    if not soffice:
+        raise RuntimeError(
+            "No se encontró LibreOffice (comando `soffice`). "
+            "Solución: instala LibreOffice y/o agrega `soffice` al PATH. "
+            "En Streamlit Cloud puedes usar `packages.txt` con `libreoffice`."
+        )
+
+    # LibreOffice escribe el PDF en el outdir con el mismo nombre base del DOCX.
+    before = {f for f in os.listdir(work_dir) if f.lower().endswith(".pdf")}
+    try:
+        subprocess.run(
+            [
+                soffice,
+                "--headless",
+                "--nologo",
+                "--nolockcheck",
+                "--nodefault",
+                "--norestore",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                work_dir,
+                input_path,
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError as e:
+        err = (e.stderr or b"").decode("utf-8", errors="replace")
+        out = (e.stdout or b"").decode("utf-8", errors="replace")
+        raise RuntimeError(f"LibreOffice falló.\nSTDOUT:\n{out}\nSTDERR:\n{err}") from e
+
+    after = [f for f in os.listdir(work_dir) if f.lower().endswith(".pdf") and f not in before]
+    if not after:
+        # Fallback: si no detectamos el nuevo archivo, buscamos el más reciente
+        pdfs = [os.path.join(work_dir, f) for f in os.listdir(work_dir) if f.lower().endswith(".pdf")]
+        if not pdfs:
+            raise RuntimeError("LibreOffice no generó ningún PDF.")
+        generated_path = max(pdfs, key=lambda p: os.path.getmtime(p))
+    else:
+        generated_path = os.path.join(work_dir, after[0])
+
+    # Normalizamos al nombre esperado (output_path)
+    if os.path.abspath(generated_path) != os.path.abspath(output_path):
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        os.replace(generated_path, output_path)
 
 # =========================================================
 # 🔗 TAB UNIR PDFS
@@ -216,8 +299,7 @@ with tab_word:
                         f.write(doc.getbuffer())
 
                     try:
-                        # docx2pdf requiere MS Word (Windows) o un entorno compatible.
-                        docx2pdf_convert(input_path, output_path)
+                        convert_docx_to_pdf(input_path, output_path, tmpdir)
                         with open(output_path, "rb") as f:
                             st.download_button(
                                 label=f"⬇️ Descargar {pdf_name}",
@@ -229,7 +311,7 @@ with tab_word:
                     except Exception as e:
                         st.error(
                             f"❌ No se pudo convertir `{doc.name}`. "
-                            f"En Windows normalmente necesitas Microsoft Word instalado. "
+                            f"Si estás en Linux/Streamlit Cloud, necesitas LibreOffice (soffice). "
                             f"Detalle: {e}"
                         )
 
